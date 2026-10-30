@@ -1,3 +1,7 @@
+# PREPARE FOR LAB 3. Re-creates Lab 2's exact split and preprocessing as a standalone script and
+# saves everything Lab 3 needs: the encoded matrices, labels, row IDs, the fitted preprocessor, the
+# two baseline pipelines (logistic regression + tree) and a manifest. Test predictions are never
+# computed here.
 from pathlib import Path
 import argparse
 import hashlib
@@ -25,14 +29,20 @@ from sklearn.tree import DecisionTreeClassifier, export_text
 from threadpoolctl import threadpool_limits
 
 
+# finite: turns +inf/-inf into missing values (they come from dividing by a zero duration), so the
+# imputer can fill them with the training median.
 def finite(values):
     return values.replace([np.inf, -np.inf], np.nan)
 
 
+# save_json: takes a file name and a dict, writes it as JSON in the output folder.
 def save_json(name, values):
     (out / name).write_text(json.dumps(values, indent=2))
 
 
+# PortEncoder: one-hot encodes the destination port. fit takes the TRAINING ports and remembers
+# them, plus a reserved value -1 = 'other'. transform takes any ports, sends ports never seen in
+# training to -1, and returns a sparse 0/1 matrix: one column per known port plus 'other'.
 class PortEncoder(TransformerMixin, BaseEstimator):
     def fit(self, values, y=None):
         values = np.asarray(values, dtype=float)
@@ -51,6 +61,8 @@ class PortEncoder(TransformerMixin, BaseEstimator):
         return self.encoder_.get_feature_names_out(input_features)
 
 
+# Command-line options: where the data is and where to write. Refuses a non-empty output folder so
+# old files never get mixed in.
 root = Path(__file__).resolve().parent
 parser = argparse.ArgumentParser()
 parser.add_argument("--data-dir", type=Path, default=root / "MachineLearningCVE")
@@ -64,6 +76,7 @@ save_json("run_status.json", {"status": "running"})
 started = time.perf_counter()
 thread_limit = threadpool_limits(limits=6)
 
+# Same loading, de-duplication and stratified 70/15/15 split (seed 42) as the Lab 2 notebook.
 files = sorted(args.data_dir.glob("*.csv"))
 assert len(files) == 8
 df = pd.concat([pd.read_csv(f).rename(columns=str.strip).assign(source_file=f.name)
@@ -89,6 +102,8 @@ pd.Series({"seed": 42, "files": len(files), "raw_rows": raw_rows,
            "removed_duplicates": int(duplicates.sum()), "conflicting_rows": len(conflicts),
            **{name: len(rows) for name, rows in parts.items()}}).to_csv(out / "data_audit.csv")
 
+# Same feature choices: drop constant features and the duplicated column; same log decision for
+# Total Length of Fwd Packets.
 x = finite(df[features])
 y = (df["Label"] != "BENIGN").astype(int)
 constant = [c for c in features if c != "Destination Port" and x.loc[train, c].nunique() <= 1]
@@ -100,6 +115,7 @@ logs = ["Total Length of Fwd Packets"] if abs(logged.skew()) < abs(values.skew()
 pd.Series({"raw_skew": values.skew(), "log1p_skew": logged.skew(),
            "keep_log1p": bool(logs)}).to_csv(out / "log_decision.csv")
 
+# Same preprocessing, FITTED on the training rows only, then applied to validation and test.
 blocks = []
 for name, columns in [("numeric", [c for c in eligible if c not in logs]),
                        ("log", [c for c in eligible if c in logs])]:
@@ -114,6 +130,8 @@ x_val = prep.transform(x.loc[val])
 x_test = prep.transform(x.loc[test])
 encoded_features = prep.get_feature_names_out().tolist()
 
+# Save the preprocessor, the feature names, the three sparse matrices and the label files (with row
+# IDs).
 with (out / "preprocessor.pkl").open("wb") as file:
     cloudpickle.dump(prep, file)
 pd.Series(encoded_features, name="encoded_feature").to_csv(out / "encoded_features.csv", index=False)
@@ -122,11 +140,14 @@ for name, rows, matrix in zip(parts, parts.values(), [x_train, x_val, x_test]):
     pd.DataFrame({"row_id": rows, "binary_label": y.loc[rows].to_numpy(),
                   "multiclass_label": df.loc[rows, "Label"].to_numpy()}).to_csv(
                       out / f"y_{name}.csv", index=False)
+# The multiclass class list (same >= 100/20/20 rule).
 keep = counts.index[(counts.train >= 100) & (counts.validation >= 20) & (counts.test >= 20)].tolist()
 if "BENIGN" not in keep:
     keep.append("BENIGN")
 counts.loc[~counts.index.isin(keep)].to_csv(out / "excluded_multiclass.csv")
 
+# Refit the binary baselines: unregularised logistic regression (C = 1 fallback) and trees of depth
+# 3, 5, 10 and unlimited.
 attempts = []
 for c in [np.inf, 1]:
     logistic = LogisticRegression(C=c, max_iter=1000, random_state=42)
@@ -149,6 +170,7 @@ for depth in [3, 5, 10, None]:
     tree.fit(x_train, y.loc[train])
     candidates.append(("tree", tree, time.perf_counter() - tick))
 
+# Pick the tree depth by validation balanced accuracy; logistic regression has a single candidate.
 trials, chosen = [], {}
 best = -np.inf
 for name, model, seconds in candidates:
@@ -167,6 +189,8 @@ for name, model, seconds in candidates:
             best = balanced
 pd.DataFrame(trials).to_csv(out / "validation_candidates.csv", index=False)
 
+# Save each chosen model as a full pipeline (clean -> preprocess -> classifier), with its validation
+# predictions and settings.
 scores, settings = [], {}
 for name, (model, probability, prediction, row) in chosen.items():
     pipeline = Pipeline([("clean", FunctionTransformer(finite)), ("features", prep), ("classifier", model)])
@@ -189,6 +213,8 @@ for name, (model, probability, prediction, row) in chosen.items():
 pd.DataFrame(scores).to_csv(out / "baseline_validation.csv", index=False)
 save_json("selected_baselines.json", settings)
 
+# The manifest: what was done and with which versions. Its status 'complete' is what Lab 3 checks
+# before starting.
 real_data = args.data_dir.resolve() == (root / "MachineLearningCVE").resolve()
 save_json("manifest.json", {
     "status": "complete", "data_scope": "full real dataset" if real_data else "custom test data",
