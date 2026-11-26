@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node build-probe.mjs",
+    "build": "node build-destlink-race.mjs",
     "start": "node server.mjs"
   },
   "engines": {
