@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
-const marker = "HOSTINGER_NODE_VERSION_WATCH_TOCTOU_GATE:r221";
+const marker = "HOSTINGER_NODE_LOG_WATCH_TOCTOU_GATE:r222";
 const output = path.resolve("dist");
 const alternate = path.resolve("evil-root");
 const versionsRoot = path.resolve(process.cwd(), "..", "..", "versions");

