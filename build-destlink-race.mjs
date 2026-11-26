@@ -3,18 +3,19 @@ import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 
-const marker = "HOSTINGER_NODE_DESTLINK_RUNTIME_RACE:r254r";
-const nonce = "bugbounty-DESTLINK-RACE-20261126-r254r-64ac9e2b";
-const name = "h1-destlink-race-r254r";
+const marker = "HOSTINGER_NODE_DESTLINK_RUNTIME_RACE:r254s";
+const nonce = "bugbounty-DESTLINK-RACE-20261126-r254s-b80d52a1";
+const name = "h1-destlink-race-r254s";
 const output = path.resolve("dist");
 const vhostRoot = path.resolve(process.cwd(), "../../..");
 const publicRoot = path.join(vhostRoot, "public_html");
-const sibling = path.join(vhostRoot, "h1-destlink-race-target-r254r");
+const sibling = path.join(vhostRoot, "h1-destlink-race-target-r254s");
 const destination = path.join(publicRoot, name);
-const alternate = path.join(publicRoot, ".h1-destlink-race-swap-r254r");
-const watcherLog = path.join(os.homedir(), ".h1-r254r-dest-race-watcher.log");
+const alternate = path.join(vhostRoot, ".h1-destlink-race-swap-r254s");
+const watcherLog = path.join(os.homedir(), ".h1-r254s-dest-race-watcher.log");
 const oldSibling = path.join(vhostRoot, "h1-destlink-race-target-r254p");
 const oldSiblingQ = path.join(vhostRoot, "h1-destlink-race-target-r254q");
+const oldSiblingR = path.join(vhostRoot, "h1-destlink-race-target-r254r");
 
 function removeExact(target) {
   try {
@@ -30,10 +31,14 @@ try { fs.chmodSync(oldSibling, 0o700); } catch (error) { if (error.code !== "ENO
 removeExact(oldSibling);
 try { fs.chmodSync(oldSiblingQ, 0o700); } catch (error) { if (error.code !== "ENOENT") throw error; }
 removeExact(oldSiblingQ);
+try { fs.chmodSync(oldSiblingR, 0o700); } catch (error) { if (error.code !== "ENOENT") throw error; }
+removeExact(oldSiblingR);
 for (const oldPath of [
   path.join(os.homedir(), ".h1-r254p-dest-race-trace.json"),
   path.join(os.homedir(), ".h1-r254q-dest-race-trace.json"),
   path.join(os.homedir(), ".h1-r254q-dest-race-watcher.log"),
+  path.join(os.homedir(), ".h1-r254r-dest-race-trace.json"),
+  path.join(os.homedir(), ".h1-r254r-dest-race-watcher.log"),
   watcherLog,
 ]) removeExact(oldPath);
 removeExact(output);
