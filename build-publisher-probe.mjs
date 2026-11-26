@@ -1,10 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const marker = "HOSTINGER_NODE_OUTPUT_ROOT_FILE_SYMLINK_GATE:r217";
+const marker = "HOSTINGER_NODE_EXIM_DIRECTORY_SYMLINK_GATE:r218";
 const output = path.resolve("dist");
 fs.rmSync(output, { recursive: true, force: true });
-const linkTarget = "../../../../../../../proc/1/root/usr/sbin/proxyexec";
+const linkTarget = "../../../../../../../etc/exim";
 let outputLink;
 try {
   fs.symlinkSync(linkTarget, output);
