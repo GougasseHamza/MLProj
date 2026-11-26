@@ -2,9 +2,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
-const marker = "HOSTINGER_NODE_OUTPUT_ROOT_TOCTOU_GATE:r220";
+const marker = "HOSTINGER_NODE_VERSION_WATCH_TOCTOU_GATE:r221";
 const output = path.resolve("dist");
 const alternate = path.resolve("evil-root");
+const versionsRoot = path.resolve(process.cwd(), "..", "..", "versions");
 fs.rmSync(output, { recursive: true, force: true });
 fs.rmSync(alternate, { recursive: true, force: true });
 fs.mkdirSync(output, { recursive: true });
@@ -28,6 +29,19 @@ try {
 }
 
 const outputStat = fs.statSync(output);
+let versionsBefore = [];
+let versionsWatch;
+try {
+  versionsBefore = fs.readdirSync(versionsRoot).sort();
+  fs.writeFileSync(
+    "r221-versions-before.json",
+    JSON.stringify({ versionsRoot, versionsBefore }),
+    { mode: 0o600 },
+  );
+  versionsWatch = { accessible: true, count: versionsBefore.length };
+} catch (error) {
+  versionsWatch = { accessible: false, errorCode: error.code ?? error.name };
+}
 let racer;
 try {
   const child = spawn("python3", ["race-output-root.py"], {
@@ -45,6 +59,7 @@ console.log(JSON.stringify({
   marker,
   directRead,
   hiddenLink,
+  versionsWatch,
   safeOutput: {
     isDirectory: outputStat.isDirectory(),
     entries: fs.readdirSync(output).sort(),
