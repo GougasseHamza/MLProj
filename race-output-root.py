@@ -15,7 +15,7 @@ SYS_RENAMEAT2 = 316
 AT_FDCWD = -100
 RENAME_EXCHANGE = 2
 IN_OPEN = 0x00000020
-MARKER = b"HOSTINGER_NODE_SINGLE_FILE_TOCTOU_GATE:r231"
+MARKER = b"HOSTINGER_NODE_SINGLE_FILE_TOCTOU_GATE:r232"
 PUBLISHING = b"==> Publishing"
 libc = ctypes.CDLL(None, use_errno=True)
 first = os.fsencode("dist/probe-001")
@@ -94,11 +94,11 @@ if log_path is not None and watch >= 0:
             cycles = 0
             errors = 0
             while time.monotonic() < race_deadline:
-                time.sleep(0.0005)
+                time.sleep(0.0003)
                 if exchange() != 0:
                     errors += 1
                     break
-                time.sleep(0.00005)
+                time.sleep(0.0001)
                 if exchange() != 0:
                     errors += 1
                     break
@@ -115,7 +115,7 @@ if inotify_fd >= 0:
     os.close(inotify_fd)
 trace["finishedAfterMs"] = round((time.monotonic() - started) * 1000, 3)
 try:
-    trace_path = Path.home() / ".h1-r231-race-trace.json"
+    trace_path = Path.home() / ".h1-r232-race-trace.json"
     trace_path.write_text(json.dumps(trace, sort_keys=True))
     trace_path.chmod(0o600)
 except OSError:

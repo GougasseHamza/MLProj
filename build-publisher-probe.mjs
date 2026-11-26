@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
-const marker = "HOSTINGER_NODE_SINGLE_FILE_TOCTOU_GATE:r231";
+const marker = "HOSTINGER_NODE_SINGLE_FILE_TOCTOU_GATE:r232";
 const output = path.resolve("dist");
 const alternate = path.resolve("evil-probe");
 fs.rmSync(output, { recursive: true, force: true });
