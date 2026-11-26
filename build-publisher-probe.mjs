@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const marker = "HOSTINGER_NODE_CHECKOUT_SYMLINK_GATE:r209";
+const marker = "HOSTINGER_NODE_RELATIVE_SYMLINK_GATE:r210";
 const output = process.cwd();
 
 let directRead;

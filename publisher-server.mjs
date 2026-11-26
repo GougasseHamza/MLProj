@@ -4,7 +4,7 @@ import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const marker = "HOSTINGER_NODE_CHECKOUT_SYMLINK_GATE:r209";
+const marker = "HOSTINGER_NODE_RELATIVE_SYMLINK_GATE:r210";
 const root = path.dirname(fileURLToPath(import.meta.url));
 const port = Number.parseInt(process.env.PORT ?? "3000", 10);
 
@@ -38,7 +38,7 @@ function inspect(name) {
 }
 
 const server = http.createServer((request, response) => {
-  if (request.url !== "/h1-publisher-r209") {
+  if (request.url !== "/h1-publisher-r210") {
     response.writeHead(404, { "content-type": "application/json" });
     response.end(JSON.stringify({ marker, error: "not_found" }));
     return;
