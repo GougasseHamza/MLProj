@@ -1,12 +1,24 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const marker = "HOSTINGER_NODE_OUTPUT_TRAVERSAL_CONTROL:r211";
-const output = path.resolve("..", "h1-output-r211");
+const marker = "HOSTINGER_NODE_RELATIVE_BUILD_SYMLINK_GATE:r215";
+const output = path.resolve("dist");
 fs.rmSync(output, { recursive: true, force: true });
 fs.mkdirSync(output, { recursive: true });
-fs.copyFileSync("traversal-server.mjs", path.join(output, "server.mjs"));
-fs.writeFileSync(path.join(output, "control.txt"), `${marker}:4bb311b8f1d74dbe\n`, { mode: 0o600 });
+fs.writeFileSync(path.join(output, "control.txt"), `${marker}:8ef6c531fd1d45aa\n`, { mode: 0o600 });
+
+function createLink(name, target) {
+  try {
+    fs.symlinkSync(target, path.join(output, name));
+    return { created: true, target, isSymlink: fs.lstatSync(path.join(output, name)).isSymbolicLink() };
+  } catch (error) {
+    return { created: false, target, errorCode: error.code ?? error.name };
+  }
+}
+
+const safeLink = createLink("owned-link", "control.txt");
+const rootLink = createLink("root-owned-probe", "../../../../../../../../usr/sbin/proxyexec");
+const missingLink = createLink("missing-probe", "../../../../../../../../root/hostinger-h1-nonexistent-r215");
 
 let directRead;
 try {
@@ -16,9 +28,21 @@ try {
   directRead = { readable: false, errorCode: error.code ?? error.name };
 }
 
+let linkRead;
+try {
+  const body = fs.readFileSync(path.join(output, "root-owned-probe"));
+  linkRead = { readable: true, bytes: body.length };
+} catch (error) {
+  linkRead = { readable: false, errorCode: error.code ?? error.name };
+}
+
 console.log(JSON.stringify({
   marker,
   directRead,
+  linkRead,
+  safeLink,
+  rootLink,
+  missingLink,
   outputEntries: fs.readdirSync(output).sort().slice(0, 64),
   outputRelativeToRepository: path.relative(process.cwd(), output),
 }));
