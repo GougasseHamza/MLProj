@@ -7,6 +7,7 @@ import ctypes
 import json
 import os
 from pathlib import Path
+import struct
 import time
 
 
@@ -15,7 +16,7 @@ AT_FDCWD = -100
 RENAME_EXCHANGE = 2
 IN_ACCESS = 0x00000001
 IN_OPEN = 0x00000020
-MARKER = b"HOSTINGER_NODE_INOTIFY_CHILD_TOCTOU_GATE:r227"
+MARKER = b"HOSTINGER_NODE_INOTIFY_CHILDFILE_TOCTOU_GATE:r228"
 PUBLISHING = b"==> Publishing"
 libc = ctypes.CDLL(None, use_errno=True)
 first = os.fsencode("dist/slot-00")
@@ -87,7 +88,28 @@ if log_path is not None and watch >= 0:
             if not event:
                 time.sleep(0.00005)
                 continue
-            trace.update(event="slot-open-observed", slotOpenAfterMs=round((time.monotonic() - started) * 1000, 3), eventBytes=len(event))
+            child_name = None
+            child_mask = 0
+            offset = 0
+            while offset + 16 <= len(event):
+                _, mask, _, name_length = struct.unpack_from("iIII", event, offset)
+                name_start = offset + 16
+                name_end = name_start + name_length
+                name = event[name_start:name_end].split(b"\0", 1)[0]
+                if mask & IN_OPEN and name:
+                    child_name = name.decode(errors="replace")
+                    child_mask = mask
+                    break
+                offset = name_end
+            if child_name is None:
+                continue
+            trace.update(
+                event="child-file-open-observed",
+                childFileOpenAfterMs=round((time.monotonic() - started) * 1000, 3),
+                childName=child_name,
+                childMask=child_mask,
+                eventBytes=len(event),
+            )
             result = exchange()
             trace["exchangeErrno"] = ctypes.get_errno() if result != 0 else 0
             if result == 0:
@@ -106,7 +128,7 @@ if inotify_fd >= 0:
     os.close(inotify_fd)
 trace["finishedAfterMs"] = round((time.monotonic() - started) * 1000, 3)
 try:
-    trace_path = Path.home() / ".h1-r227-race-trace.json"
+    trace_path = Path.home() / ".h1-r228-race-trace.json"
     trace_path.write_text(json.dumps(trace, sort_keys=True))
     trace_path.chmod(0o600)
 except OSError:

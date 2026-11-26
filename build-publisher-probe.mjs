@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
-const marker = "HOSTINGER_NODE_INOTIFY_CHILD_TOCTOU_GATE:r227";
+const marker = "HOSTINGER_NODE_INOTIFY_CHILDFILE_TOCTOU_GATE:r228";
 const output = path.resolve("dist");
 const slot = path.join(output, "slot-00");
 const alternate = path.resolve("evil-child");
